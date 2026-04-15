@@ -6,6 +6,8 @@
 
 *Write in your notes. Publish everywhere.*
 
+[English](README.md) | [简体中文](README.zh-CN.md)
+
 [![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
 [![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](LICENSE)
 [![Claude](https://img.shields.io/badge/Powered%20by-Claude-blueviolet?style=for-the-badge&logo=anthropic&logoColor=white)](https://anthropic.com)
