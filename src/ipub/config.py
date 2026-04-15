@@ -21,6 +21,10 @@ DEFAULT_CONFIG = {
         "zhihu": {"format": "markdown", "max_length": None},
         "feishu": {"format": "markdown", "max_length": None},
     },
+    "feishu": {
+        "app_id": "",
+        "app_secret": "",
+    },
     "style": {
         "tone": "technical",
         "avoid_phrases": ["众所周知", "值得一提的是", "本文将"],
