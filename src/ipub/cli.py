@@ -117,15 +117,15 @@ def pull_feishu(folder, output, app_id, app_secret):
 
 
 @pull.command(name="feishu-wiki")
-@click.argument("space_id")
+@click.argument("token")
 @click.option("--output", "-o", default="./feishu-wiki", help="Output directory")
 @click.option("--app-id", envvar="FEISHU_APP_ID", help="Feishu App ID")
 @click.option("--app-secret", envvar="FEISHU_APP_SECRET", help="Feishu App Secret")
-def pull_feishu_wiki_cmd(space_id, output, app_id, app_secret):
-    """Pull pages from a Feishu wiki space."""
+def pull_feishu_wiki_cmd(token, output, app_id, app_secret):
+    """Pull pages from Feishu wiki. Accepts space_id, node_token, or full URL."""
     pull_feishu_wiki(
         output_dir=Path(output),
-        space_id=space_id,
+        token=token,
         app_id=app_id,
         app_secret=app_secret,
     )

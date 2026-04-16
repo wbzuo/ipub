@@ -1,0 +1,21 @@
+{
+  "required": [
+    {
+      "permission": "docx:document:readonly",
+      "name": "查看文档内容",
+      "description": "读取飞书文档正文内容"
+    },
+    {
+      "permission": "drive:drive:readonly",
+      "name": "查看云盘文件信息",
+      "description": "列出文件夹中的文档列表"
+    }
+  ],
+  "optional_wiki": [
+    {
+      "permission": "wiki:wiki:readonly",
+      "name": "查看知识库",
+      "description": "列出并读取飞书知识库页面"
+    }
+  ]
+}

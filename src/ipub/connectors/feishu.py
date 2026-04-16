@@ -17,8 +17,13 @@ class FeishuClient:
     """Client for Feishu Open API."""
 
     def __init__(self, app_id: str | None = None, app_secret: str | None = None):
-        self.app_id = app_id or os.environ.get("FEISHU_APP_ID", "")
-        self.app_secret = app_secret or os.environ.get("FEISHU_APP_SECRET", "")
+        # Priority: argument > env var > ipub.yaml
+        from ipub.config import load_config
+        config = load_config()
+        feishu_config = config.get("feishu", {})
+
+        self.app_id = app_id or os.environ.get("FEISHU_APP_ID", "") or feishu_config.get("app_id", "")
+        self.app_secret = app_secret or os.environ.get("FEISHU_APP_SECRET", "") or feishu_config.get("app_secret", "")
         if not self.app_id or not self.app_secret:
             raise RuntimeError(
                 "Feishu credentials not set. Either:\n"
@@ -51,11 +56,16 @@ class FeishuClient:
         # Filter for documents only
         return [f for f in files if f.get("type") in ("docx", "doc")]
 
+    def get_wiki_node_info(self, node_token: str) -> dict:
+        """Get info about a wiki node, including space_id and obj_token."""
+        resp = self._get(f"/wiki/v2/spaces/get_node?token={node_token}")
+        return resp.get("data", {}).get("node", {})
+
     def list_wiki_nodes(self, space_id: str, parent_node_token: str | None = None) -> list[dict]:
         """List nodes in a wiki space."""
-        params = f"?space_id={space_id}"
+        params = ""
         if parent_node_token:
-            params += f"&parent_node_token={parent_node_token}"
+            params = f"?parent_node_token={parent_node_token}"
         resp = self._get(f"/wiki/v2/spaces/{space_id}/nodes{params}")
         return resp.get("data", {}).get("items", [])
 
@@ -315,15 +325,15 @@ def pull_feishu_docs(
 
 def pull_feishu_wiki(
     output_dir: Path,
-    space_id: str,
+    token: str,
     app_id: str | None = None,
     app_secret: str | None = None,
 ) -> list[Path]:
-    """Pull wiki pages from a Feishu wiki space.
+    """Pull wiki pages from Feishu. Accepts space_id, node_token, or wiki URL.
 
     Args:
         output_dir: Directory to save markdown files
-        space_id: Feishu wiki space ID
+        token: Feishu wiki space_id, node_token, or full URL
         app_id: Feishu App ID
         app_secret: Feishu App Secret
 
@@ -333,30 +343,69 @@ def pull_feishu_wiki(
     client = FeishuClient(app_id, app_secret)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    click.echo(f"Connecting to Feishu wiki space: {space_id}")
-    nodes = client.list_wiki_nodes(space_id)
+    # Parse URL if given
+    if "feishu.cn" in token:
+        import re
+        match = re.search(r"/wiki/([A-Za-z0-9]+)", token)
+        if match:
+            token = match.group(1)
+            click.echo(f"Extracted token from URL: {token}")
+        else:
+            raise click.ClickException(f"Cannot parse wiki token from URL: {token}")
+
+    # Try as node_token first — get space_id from it
+    click.echo(f"Looking up token: {token}")
+    try:
+        node_info = client.get_wiki_node_info(token)
+        space_id = node_info.get("space_id", "")
+        parent_node = node_info.get("node_token", "")
+        node_title = node_info.get("title", "")
+        if space_id:
+            click.echo(f"Found wiki space: {space_id}, page: {node_title}")
+            # Pull this node as a document + its children
+            nodes = client.list_wiki_nodes(space_id, parent_node_token=parent_node)
+            # Also include the node itself
+            if node_info.get("obj_type") == "docx":
+                nodes = [node_info] + nodes
+        else:
+            raise RuntimeError("No space_id found")
+    except Exception:
+        # Maybe it's a space_id directly
+        click.echo(f"Trying as space_id: {token}")
+        space_id = token
+        nodes = client.list_wiki_nodes(space_id)
 
     if not nodes:
         click.echo("No wiki pages found.")
         return []
 
-    click.echo(f"Found {len(nodes)} page(s). Pulling...")
+    # Recursively collect all nodes (including children of children)
+    all_nodes = []
+    _collect_nodes_recursive(client, space_id, nodes, all_nodes, depth=0)
+
+    click.echo(f"Found {len(all_nodes)} page(s) total. Pulling...")
 
     saved = []
-    for node in nodes:
+    for node, depth in all_nodes:
         node_token = node.get("node_token", "")
         obj_token = node.get("obj_token", "")
         title = node.get("title", "untitled")
         node_type = node.get("obj_type", "")
 
         if node_type != "docx":
-            click.echo(f"  Skipping non-doc: {title} ({node_type})")
+            click.echo(f"{'  ' * (depth + 1)}Skipping non-doc: {title} ({node_type})")
             continue
 
-        click.echo(f"  Pulling: {title}")
+        indent = "  " * (depth + 1)
+        click.echo(f"{indent}Pulling: {title}")
         try:
             blocks = client.get_document_blocks(obj_token)
             md_content = blocks_to_markdown(blocks)
+
+            # Skip empty documents
+            if not md_content.strip():
+                click.echo(f"{indent}  (empty, skipped)")
+                continue
 
             frontmatter = (
                 f"---\n"
@@ -371,10 +420,36 @@ def pull_feishu_wiki(
             file_path = output_dir / f"{safe_name}.md"
             file_path.write_text(frontmatter + md_content, encoding="utf-8")
             saved.append(file_path)
-            click.echo(f"    Saved: {file_path}")
+            click.echo(f"{indent}  Saved: {file_path}")
 
         except Exception as e:
-            click.echo(f"    Error: {e}")
+            click.echo(f"{indent}  Error: {e}")
 
     click.echo(f"\nPulled {len(saved)} page(s) to {output_dir}")
     return saved
+
+
+def _collect_nodes_recursive(
+    client: FeishuClient,
+    space_id: str,
+    nodes: list[dict],
+    result: list[tuple[dict, int]],
+    depth: int,
+    max_depth: int = 10,
+):
+    """Recursively collect all wiki nodes including children."""
+    if depth > max_depth:
+        return
+
+    for node in nodes:
+        result.append((node, depth))
+        node_token = node.get("node_token", "")
+        has_child = node.get("has_child", False)
+
+        if has_child and node_token:
+            try:
+                children = client.list_wiki_nodes(space_id, parent_node_token=node_token)
+                if children:
+                    _collect_nodes_recursive(client, space_id, children, result, depth + 1, max_depth)
+            except Exception as e:
+                click.echo(f"{'  ' * (depth + 2)}Error listing children of {node.get('title', '')}: {e}")
